@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Academic Captcha Solver</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Tesseract.js for client-side OCR -->
+    <script src='https://unpkg.com/tesseract.js@5.0.0/dist/tesseract.min.js'></script>
+    <style>
+        /* General body styling for a professional academic look */
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            line-height: 1.6;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            max-width: 800px;
+            width: 100%;
+            margin-bottom: 20px;
+            box-sizing: border-box; /* Include padding and border in the element's total width and height */
+        }
+
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+            font-weight: 700;
+        }
+
+        h2 {
+            color: #34495e;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+
+        p {
+            margin-bottom: 10px;
+        }
+
+        .captcha-area {
+            text-align: center;
+            margin-top: 20px;
+            border: 1px dashed #ccc;
+            padding: 20px;
+            border-radius: 5px;
+            background-color: #fdfdfd;
+        }
+
+        #captchaImage {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            margin-top: 15px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            /* Prevent large images from making the area too tall before load */
+            min-height: 50px; 
+        }
+
+        #solvedText {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #27ae60;
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #e8f8f5;
+            border-radius: 5px;
+            display: inline-block; /* To make background fit content */
+            word-break: break-all; /* Ensure long text wraps */
+        }
+
+        #loadingIndicator {
+            margin-top: 15px;
+            font-style: italic;
+            color: #7f8c8d;
+        }
+
+        .error-message {
+            color: #e74c3c;
+            font-weight: bold;
+            margin-top: 15px;
+        }
+
+        .performance-metric {
+            font-size: 0.9em;
+            color: #555;
+            margin-top: 10px;
+        }
+
+        footer {
+            margin-top: auto; /* Pushes footer to the bottom */
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            text-align: center;
+            font-size: 0.8em;
+            color: #777;
+            width: 100%;
+            max-width: 800px; /* Align footer width with container */
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Academic Captcha Solver</h1>
+
+        <p>This tool demonstrates client-side captcha solving capabilities using Tesseract.js. It accepts a captcha image URL via the <code>?url=</code> query parameter.</p>
+
+        <h2>Provided Captcha Image</h2>
+        <p><strong>URL:</strong> <span id="captchaUrlDisplay">Loading URL...</span></p>
+
+        <div class="captcha-area">
+            <img id="captchaImage" src="" alt="Captcha Image" style="display: none;">
+            <p id="imagePlaceholder">Loading captcha image...</p>
+        </div>
+
+        <h2>Solved Captcha Text</h2>
+        <p id="loadingIndicator">Initializing Tesseract.js and solving captcha...</p>
+        <p id="solvedText" style="display: none;"></p>
+        <p id="performanceMetric" class="performance-metric" style="display: none;"></p>
+        <p id="errorMessage" class="error-message" style="display: none;"></p>
+    </div>
+
+    <footer>
+        <p><strong>MIT License</strong></p>
+        <p>Copyright (c) 2023 Your Name or Organization</p>
+        <p>Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:</p>
+        <p>The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.</p>
+        <p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.</p>
+    </footer>
+
+    <script>
+        // Global Tesseract worker for reuse across recognition tasks.
+        let tesseractWorker = null;
+
+        /**
+         * Parses a URL query parameter.
+         * @param {string} name The name of the parameter to retrieve.
+         * @returns {string} The decoded parameter value or an empty string if not found.
+         */
+        function getUrlParameter(name) {
+            name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+            var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+            var results = regex.exec(location.search);
+            return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+        }
+
+        /**
+         * Initializes the Tesseract.js worker. This function is called proactively
+         * to start the worker setup early, improving perceived performance.
+         */
+        async function initializeTesseractWorker() {
+            try {
+                // Update UI to reflect worker initialization status
+                document.getElementById('loadingIndicator').textContent = "Initializing Tesseract.js worker...";
+                // Create a worker for English language OCR, with a progress logger (optional)
+                tesseractWorker = await Tesseract.createWorker('eng', 1, {
+                    // logger: m => console.log(m) // Uncomment for detailed Tesseract.js console logging
+                });
+                document.getElementById('loadingIndicator').textContent = "Tesseract.js worker initialized. Fetching captcha...";
+            } catch (error) {
+                console.error("Failed to initialize Tesseract worker:", error);
+                document.getElementById('loadingIndicator').style.display = 'none';
+                document.getElementById('errorMessage').textContent = "Error initializing OCR engine. Please check console for details and ensure Tesseract.js files are accessible.";
+                document.getElementById('errorMessage').style.display = 'block';
+            }
+        }
+
+        /**
+         * Main function to retrieve, display, and solve the captcha.
+         */
+        async function solveCaptcha() {
+            // Retrieve image URL from query parameter or use a default sample image.
+            // This default image is from Tesseract.js's own demo and is typically quick to process.
+            const imageUrl = getUrlParameter('url') || 'https://tesseract.projectnaptha.com/img/eng_text.png'; 
+            document.getElementById('captchaUrlDisplay').textContent = imageUrl;
+
+            // Get DOM elements for updating the UI
+            const captchaImageElement = document.getElementById('captchaImage');
+            const imagePlaceholderElement = document.getElementById('imagePlaceholder');
+            const solvedTextDisplayElement = document.getElementById('solvedText');
+            const loadingIndicatorElement = document.getElementById('loadingIndicator');
+            const performanceMetricElement = document.getElementById('performanceMetric');
+            const errorMessageElement = document.getElementById('errorMessage');
+
+            // Reset previous results and show loading state
+            solvedTextDisplayElement.style.display = 'none';
+            performanceMetricElement.style.display = 'none';
+            errorMessageElement.style.display = 'none';
+            loadingIndicatorElement.style.display = 'block';
+            loadingIndicatorElement.textContent = "Loading captcha image...";
+
+            try {
+                // Ensure the Tesseract worker is initialized before proceeding.
+                // This handles cases where initialization might still be ongoing or failed.
+                if (!tesseractWorker) {
+                    await initializeTesseractWorker();
+                    if (!tesseractWorker) { // Double check if initialization failed
+                        throw new Error("Tesseract worker could not be initialized.");
+                    }
+                }
+                
+                // Set the image source; actual solving begins after image loads
+                captchaImageElement.src = imageUrl;
+                
+                // Event listener for when the image successfully loads
+                captchaImageElement.onload = async () => {
+                    imagePlaceholderElement.style.display = 'none';
+                    captchaImageElement.style.display = 'block';
+
+                    loadingIndicatorElement.textContent = "Solving captcha...";
+                    const startTime = performance.now(); // Start timer for OCR recognition
+                    
+                    // Perform OCR on the loaded image using the initialized worker
+                    const { data: { text } } = await tesseractWorker.recognize(captchaImageElement);
+                    const endTime = performance.now(); // End timer
+
+                    const recognitionTime = (endTime - startTime) / 1000; // Calculate time in seconds
+
+                    // Display the solved text, trimming whitespace
+                    solvedTextDisplayElement.textContent = text.trim() || "No text recognized. Please try a different image.";
+                    solvedTextDisplayElement.style.display = 'block';
+                    
+                    // Display performance metric
+                    performanceMetricElement.textContent = `Recognition took ${recognitionTime.toFixed(2)} seconds.`;
+                    performanceMetricElement.style.display = 'block';
+
+                    // Check against the 15-second requirement
+                    if (recognitionTime > 15) {
+                        errorMessageElement.textContent = `Warning: Recognition exceeded 15 seconds (${recognitionTime.toFixed(2)}s). For complex captchas, server-side processing or more robust models might be needed.`;
+                        errorMessageElement.style.display = 'block';
+                    }
+
+                    loadingIndicatorElement.style.display = 'none'; // Hide loading indicator
+                };
+
+                // Event listener for when the image fails to load
+                captchaImageElement.onerror = () => {
+                    imagePlaceholderElement.style.display = 'block'; // Show placeholder if image fails
+                    captchaImageElement.style.display = 'none';
+                    loadingIndicatorElement.style.display = 'none';
+                    errorMessageElement.textContent = `Failed to load captcha image from ${imageUrl}. Ensure the URL is correct and check for CORS (Cross-Origin Resource Sharing) issues if fetching from an external domain.`;
+                    errorMessageElement.style.display = 'block';
+                };
+
+            } catch (error) {
+                // Catch any errors during the solving process
+                console.error("Captcha solving error:", error);
+                loadingIndicatorElement.style.display = 'none';
+                errorMessageElement.textContent = `An unexpected error occurred during captcha solving: ${error.message}.`;
+                errorMessageElement.style.display = 'block';
+            }
+        }
+
+        // Execute functions on page load
+        document.addEventListener('DOMContentLoaded', async () => {
+            await initializeTesseractWorker(); // Start worker initialization early to optimize loading
+            solveCaptcha(); // Then proceed with the captcha solving process
+        });
+    </script>
+</body>
+</html>
